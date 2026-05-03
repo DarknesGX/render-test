@@ -4,49 +4,47 @@ const app = express();
 
 app.use(express.json({ limit: '10mb' }));
 
-// Security & CORS
+// CORS + Logging
 app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', '*');
     next();
 });
 
-// Your Discord webhook from Vercel Environment Variables
 const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK;
-
-if (!DISCORD_WEBHOOK) {
-    console.warn('⚠️ DISCORD_WEBHOOK environment variable is not set!');
-}
 
 app.post('/api/collect', async (req, res) => {
     try {
+        console.log("Received payload, forwarding to Discord...");
+
         if (!DISCORD_WEBHOOK) {
-            return res.status(500).json({ error: 'Webhook not configured' });
+            console.error("DISCORD_WEBHOOK not set!");
+            return res.status(500).json({ error: "Webhook not configured" });
         }
 
-        const response = await fetch(DISCORD_WEBHOOK, {
+        const discordRes = await fetch(DISCORD_WEBHOOK, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req.body)
         });
 
-        if (!response.ok) {
-            console.error('Discord API error:', response.status);
-        }
+        console.log("Discord responded with:", discordRes.status);
 
-        res.status(200).json({ status: 'sent' });
+        // Always return success to the client
+        res.status(200).json({ status: 'sent', message: 'Data received' });
+
     } catch (error) {
-        console.error('Discord forward error:', error);
-        res.status(500).json({ error: error.message });
+        console.error('Error in /api/collect:', error);
+        res.status(200).json({ status: 'sent', message: 'Data received but Discord failed' }); // Return 200 anyway
     }
 });
 
-// Serve static files from public folder (Vercel handles this well)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Fallback for SPA-style routing
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-module.exports = app;   // Important for Vercel
+module.exports = app;
